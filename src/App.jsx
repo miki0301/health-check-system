@@ -18,8 +18,6 @@ import {
   BarChart2
 } from 'lucide-react';
 
-// ... (REF_DATA, BASIC_ITEMS, HAZARD_DB, HAZARD_TYPES_LIST, GRADE_RECOMMENDATIONS, generateId, checkAbnormal 保持不變，為節省篇幅省略，請保留原本的定義)
-
 // -----------------------------------------------------------------------------
 // 1. 檢驗參考值資料庫 (依據使用者提供之台大醫院標準圖片)
 // -----------------------------------------------------------------------------
@@ -139,7 +137,6 @@ const HAZARD_DB = {
       { id: 'fev1', label: 'FEV1', unit: '% pred', type: 'number', ref: '>=80', checkType: 'all' },
       { id: 'fev1_fvc', label: 'FEV1/FVC', unit: '%', type: 'number', ref: '>=70', checkType: 'all' },
       { id: 'lung_pattern', label: '肺功能判讀', type: 'select', options: ['正常', '阻塞性通氣障礙', '限制性通氣障礙', '混合型通氣障礙', '異常(其他)'], ref: '正常', checkType: 'all' },
-      
       { id: 'ac_sugar', label: '飯前血糖 (AC)', unit: 'mg/dL', type: 'number', ref: REF_DATA.ac_sugar, checkType: 'all' },
       { id: 'bun', label: 'BUN', unit: 'mg/dL', type: 'number', ref: REF_DATA.bun, checkType: 'all' },
       { id: 'cre', label: '肌酸酐', unit: 'mg/dL', type: 'number', ref: REF_DATA.cre, checkType: 'all' },
@@ -528,8 +525,8 @@ export default function OccupationalHealthApp() {
   
   // 基本資料 (移除身分證)
   const [newCase, setNewCase] = useState({
-    name: '', gender: '男', dob: '', employmentDate: '', checkDate: new Date().toISOString().split('T')[0],
-    company: '', dept: '', address: '', // Remove address from here
+    name: '', gender: '男', workerId: '', dob: '', employmentDate: '', checkDate: new Date().toISOString().split('T')[0],
+    company: '', dept: '', 
     pastWork: '', pastWorkStart: '', pastWorkEnd: '', pastWorkYears: '',
     currentWorkStart: '', currentWorkYears: '', dailyHours: '',
     checkType: '定期檢查', hazardType: '01',
@@ -597,7 +594,7 @@ export default function OccupationalHealthApp() {
     setSelectedEmp(caseEntry);
     setActiveTab('list');
     setNewCase({
-        name: '', gender: '男', dob: '', employmentDate: '', checkDate: new Date().toISOString().split('T')[0],
+        name: '', gender: '男', workerId: '', dob: '', employmentDate: '', checkDate: new Date().toISOString().split('T')[0],
         company: '', dept: '', 
         pastWork: '', pastWorkStart: '', pastWorkEnd: '', pastWorkYears: '',
         currentWorkStart: '', currentWorkYears: '', dailyHours: '',
@@ -669,57 +666,150 @@ export default function OccupationalHealthApp() {
     window.html2pdf().set(opt).from(element).save();
   };
 
+  const getAllCheckItems = () => {
+    const items = new Map();
+    // 先加入基本項目
+    BASIC_ITEMS.forEach(item => {
+        if (!items.has(item.id)) items.set(item.id, item.label);
+    });
+    // 再加入所有危害作業的特殊項目
+    Object.values(HAZARD_DB).forEach(hazard => {
+        hazard.items.forEach(item => {
+            if (!items.has(item.id)) {
+                items.set(item.id, item.label);
+            }
+        });
+    });
+    return Array.from(items.entries());
+  };
+
+  const downloadTemplate = () => {
+    if (!isXlsxLoaded || !window.XLSX) {
+      alert("Excel 處理元件尚未載入完成，請稍候再試。");
+      return;
+    }
+
+    // 1. 準備標題列
+    const allCheckItems = getAllCheckItems();
+    const headers = [
+        '姓名', '工號', '部門', '性別', '出生日期', '受僱日期', 
+        '作業代碼', '檢查日期', '檢查原因', '管理分級', 
+        '醫師建議', '護理指導',
+        ...allCheckItems.map(([id, label]) => `${label} (${id})`) // 動態欄位
+    ];
+
+    // 2. 準備範例資料
+    const example1 = {
+        '姓名': '王小明', '工號': 'A001', '部門': '沖壓課', '性別': '男', '作業代碼': '02',
+        '檢查日期': '2025-10-01', '檢查原因': '定期檢查', '管理分級': '3', '醫師建議': '定期追蹤',
+        '左耳 4000Hz (l_4k)': '45', '右耳 4000Hz (r_4k)': '25', '身高 (height)': '175', '體重 (weight)': '70'
+    };
+    const example2 = {
+        '姓名': '李美華', '工號': 'B002', '部門': '品管課', '性別': '女', '作業代碼': '05',
+        '檢查日期': '2025-11-15', '檢查原因': '新進員工(受僱時)', '管理分級': '1', '醫師建議': '正常',
+        '血中鉛 (pb_blood)': '5', '血色素 (hb)': '13.5', '身高 (height)': '160', '體重 (weight)': '50'
+    };
+
+    // 3. 轉換為 Sheet
+    const ws = window.XLSX.utils.json_to_sheet([example1, example2], { header: headers });
+    
+    // 4. 調整欄寬
+    const wscols = headers.map(() => ({ wch: 20 }));
+    ws['!cols'] = wscols;
+
+    const wb = window.XLSX.utils.book_new();
+    window.XLSX.utils.book_append_sheet(wb, ws, "匯入範本");
+    
+    // 5. 增加說明頁
+    const infoWs = window.XLSX.utils.aoa_to_sheet([
+        ['作業代碼', '作業名稱'],
+        ...HAZARD_TYPES_LIST.map(t => [t.id, t.name])
+    ]);
+    window.XLSX.utils.book_append_sheet(wb, infoWs, "代碼說明");
+
+    window.XLSX.writeFile(wb, "特殊健檢匯入範本.xlsx");
+  };
+
   const handleFileUpload = (e) => {
-    if (!isXlsxLoaded || !window.XLSX) { alert("Excel 處理元件尚未載入完成，請稍候再試。"); return; }
+    if (!isXlsxLoaded || !window.XLSX) {
+        alert("Excel 處理元件尚未載入完成，請稍候再試。");
+        return;
+    }
+
     const file = e.target.files[0];
     if (!file) return;
+
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
         const bstr = evt.target.result;
         const wb = window.XLSX.read(bstr, { type: 'binary' });
-        const wsname = wb.SheetNames[0];
-        const ws = wb.Sheets[wsname];
+        const ws = wb.Sheets[wb.SheetNames[0]];
         const data = window.XLSX.utils.sheet_to_json(ws);
+        
+        const allCheckItemsMap = new Map(getAllCheckItems());
+
         const formattedData = data.map(item => {
             const hType = item['作業代碼'] ? String(item['作業代碼']).padStart(2,'0') : '01';
             const importedItemResults = {};
-            if (item['檢查數據']) importedItemResults['summary'] = { value: item['檢查數據'], isAbnormal: false };
+            
+            // 自動解析檢查項目欄位
+            Object.keys(item).forEach(key => {
+                // 檢查 Key 是否包含在我們的 ID 列表中 (格式: Label (id))
+                const match = key.match(/\((.+)\)$/);
+                if (match) {
+                    const id = match[1];
+                    if (allCheckItemsMap.has(id)) {
+                        const val = String(item[key]);
+                        // 進行自動判讀
+                        let ref;
+                        // 先找基本項目
+                        const basicItem = BASIC_ITEMS.find(i => i.id === id);
+                        if (basicItem) ref = basicItem.ref;
+                        else {
+                            // 再找特殊項目
+                            ref = HAZARD_DB[hType]?.items.find(i => i.id === id)?.ref;
+                        }
+                        
+                        const isAbnormal = checkAbnormal(val, ref, item['性別'] || '男');
+                        importedItemResults[id] = { value: val, isAbnormal };
+                    }
+                }
+            });
+
             return {
-              id: generateId(), name: item['姓名'] || '未命名', gender: item['性別'] || '男', dept: item['部門'] || '',
-              hazardType: hType, checkType: item['檢查原因'] || '定期檢查', checkDate: item['檢查日期'] || new Date().toISOString().split('T')[0],
-              grade: String(item['管理分級'] || '1'), doctorNote: item['醫師建議'] || '', nurseNote: item['護理指導'] || '',
-              itemResults: importedItemResults, dob: '', employmentDate: '', company: '',
-              pastWork: '', pastWorkStart: '', pastWorkEnd: '', pastWorkYears: '', currentWorkStart: '', currentWorkYears: '', dailyHours: '',
+              id: generateId(),
+              name: item['姓名'] || '未命名',
+              workerId: item['工號'] || '',
+              gender: item['性別'] || '男',
+              dept: item['部門'] || '',
+              hazardType: hType,
+              checkType: item['檢查原因'] || '定期檢查',
+              checkDate: item['檢查日期'] || new Date().toISOString().split('T')[0],
+              grade: String(item['管理分級'] || '1'),
+              doctorNote: item['醫師建議'] || '',
+              nurseNote: item['護理指導'] || '',
+              itemResults: importedItemResults,
+              dob: item['出生日期'] || '',
+              employmentDate: item['受僱日期'] || '',
+              company: '',
+              pastWork: '', pastWorkStart: '', pastWorkEnd: '', pastWorkYears: '',
+              currentWorkStart: '', currentWorkYears: '', dailyHours: '',
             };
         });
+
         setEmployees(prev => [...prev, ...formattedData]);
         setActiveTab('list');
-      } catch (err) { alert('檔案讀取失敗，請確認格式。'); }
+        alert(`成功匯入 ${formattedData.length} 筆資料！`);
+      } catch (err) {
+        console.error(err);
+        alert('檔案讀取失敗，請確認格式是否正確。');
+      }
     };
     reader.readAsBinaryString(file);
   };
-  
-  const downloadTemplate = () => {
-    if (!isXlsxLoaded || !window.XLSX) { alert("Excel 處理元件尚未載入完成，請稍候再試。"); return; }
-    const ws = window.XLSX.utils.json_to_sheet([{ 姓名: '王小明', 性別: '男', 部門: '沖壓課', 作業代碼: '02', 檢查日期: '2025-10-01', 檢查原因: '定期檢查', 管理分級: '3', 檢查數據: '左耳4k: 40dB', 醫師建議: '定期追蹤' }]);
-    const wb = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(wb, ws, "匯入範本");
-    window.XLSX.writeFile(wb, "特殊健檢匯入範本.xlsx");
-  };
 
-  const currentHazardInfo = HAZARD_DB[newCase.hazardType] || HAZARD_DB['01'];
-  const isEntryCheck = newCase.checkType === '新進員工(受僱時)';
-  const activeItems = (currentHazardInfo.items || []).filter(item => {
-      if (item.checkType === 'all') return true;
-      if (isEntryCheck && item.checkType === 'entry') return true;
-      if (!isEntryCheck && item.checkType === 'periodic') return true;
-      return false;
-  });
-  
-  const abnormalCount = activeItems.filter(item => newCase.itemResults[item.id]?.isAbnormal).length + BASIC_ITEMS.filter(item => newCase.itemResults[item.id]?.isAbnormal).length;
-
-  // Dashboard Data
+  // ... (Dashboard Data Calculation & Render remain same)
   const dashboardData = {};
   employees.forEach(e => {
       const hName = HAZARD_DB[e.hazardType]?.name || e.hazardType;
@@ -767,9 +857,9 @@ export default function OccupationalHealthApp() {
                 <div>
                     <h3 className="text-lg font-bold mb-2 text-gray-800">系統更新公告</h3>
                     <p className="text-gray-600 text-sm">
-                        1. **智慧判讀升級**：整合台大醫院參考值，依據性別、年齡自動判斷異常數值（如血色素、血糖、肝腎功能等）。<br/>
+                        1. **智慧判讀升級**：整合台大醫院參考值，依據性別、年齡自動判斷異常數值。<br/>
                         2. **隱私強化**：全面移除身分證字號與地址欄位。<br/>
-                        3. **報告格式**：僅保留護理師簽章，符合實務需求。
+                        3. **批次匯入優化**：支援下載完整 32 類作業之檢查項目範本，並具備自動對應匯入功能。
                     </p>
                 </div>
             </div>
@@ -777,7 +867,7 @@ export default function OccupationalHealthApp() {
             <div className="grid grid-cols-1 gap-6">
                 {Object.keys(dashboardData).length === 0 ? (
                     <div className="bg-white p-8 rounded-lg text-center text-gray-400 border border-dashed border-gray-300">
-                        尚無檢查資料，請先新增個案。
+                        尚無檢查資料，請先新增個案或使用批次匯入功能。
                     </div>
                 ) : (
                     Object.entries(dashboardData).map(([hazardName, data]) => (
@@ -810,6 +900,7 @@ export default function OccupationalHealthApp() {
                 <h3 className="text-lg font-bold text-teal-800 mb-3 border-l-4 border-teal-500 pl-2">一、基本資料</h3>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-gray-50 p-4 rounded border border-gray-200">
                     <div><label className="block text-xs font-bold text-gray-500 mb-1">姓名</label><input type="text" value={newCase.name} onChange={e => setNewCase({...newCase, name: e.target.value})} className="w-full p-2 border rounded"/></div>
+                    <div><label className="block text-xs font-bold text-gray-500 mb-1">工號</label><input type="text" value={newCase.workerId} onChange={e => setNewCase({...newCase, workerId: e.target.value})} className="w-full p-2 border rounded"/></div>
                     <div><label className="block text-xs font-bold text-gray-500 mb-1">性別 (影響參考值)</label><select value={newCase.gender} onChange={e => setNewCase({...newCase, gender: e.target.value})} className="w-full p-2 border rounded bg-white"><option value="男">男</option><option value="女">女</option></select></div>
                     <div><label className="block text-xs font-bold text-gray-500 mb-1">出生日期</label><input type="date" value={newCase.dob} onChange={e => setNewCase({...newCase, dob: e.target.value})} className="w-full p-2 border rounded"/></div>
                     <div><label className="block text-xs font-bold text-gray-500 mb-1">受僱日期</label><input type="date" value={newCase.employmentDate} onChange={e => setNewCase({...newCase, employmentDate: e.target.value})} className="w-full p-2 border rounded"/></div>
@@ -936,11 +1027,12 @@ export default function OccupationalHealthApp() {
                             <h3 className="font-bold mb-2 bg-gray-100 p-1">一、基本資料</h3>
                             <div className="grid grid-cols-4 gap-2">
                                 <div>姓名: {selectedEmp.name}</div>
+                                <div>工號: {selectedEmp.workerId}</div>
                                 <div>性別: {selectedEmp.gender}</div>
                                 <div>出生日期: {selectedEmp.dob}</div>
                                 <div>受僱日期: {selectedEmp.employmentDate}</div>
                                 <div>檢查日期: {selectedEmp.checkDate}</div>
-                                <div className="col-span-3">事業單位: {selectedEmp.company}</div>
+                                <div className="col-span-2">事業單位: {selectedEmp.company}</div>
                             </div>
                         </div>
                         
